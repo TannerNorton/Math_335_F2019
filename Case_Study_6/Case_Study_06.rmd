@@ -1,0 +1,164 @@
+---
+title: "Case Study 6: The collapse of construction in Idaho"
+author: "Tanner Norton"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:  
+    keep_md: true
+    toc: true
+    toc_float: true
+    code_folding: hide
+    fig_height: 6
+    fig_width: 12
+    fig_align: 'center'
+---
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+```{r load_libraries, include=FALSE}
+pacman::p_load(tidyverse, readxl, stringr, Lahman, blscrapeR)
+library(buildings)
+```
+
+```{r load_data, include=FALSE}
+# Convert all subgroup strings into lower case so they are in a standardized form
+not_restaurants <- c("development","Food preperation center", "Food Services center","bakery","Grocery","conceession","Cafeteria", "lunchroom","school","facility"," hall ") %>%
+  str_to_lower %>%
+  str_flatten(collapse = "|")
+
+standalone_retail <- c("Wine","Spirits","Liquor","Convenience","drugstore","Flying J", "Rite Aid ","walgreens ","Love's Travel ") %>%
+  str_to_lower %>%
+  str_flatten(collapse = "|")
+
+full_service_type <- c("Ristorante","mexican","pizza ","steakhouse"," grill ","buffet","tavern"," bar ","waffle","italian","steak house") %>%
+  str_to_lower %>%
+  str_flatten(collapse = "|")
+
+quick_service_type <- c("coffee"," java "," Donut ","Doughnut"," burger ","Ice Cream ","custard ","sandwich ","fast food "," bagel ") %>%
+  str_to_lower %>%
+  str_flatten(collapse = "|")
+
+quick_service_names <- restaurants$Restaurant[restaurants$Type %in% c("coffee","Ice Cream","Fast Food")] %>%
+  str_to_lower %>%
+  str_flatten(collapse = "|")
+
+full_service_names <- restaurants$Restaurant[restaurants$Type %in% c("Pizza","Casual Dining","Fast Casual")] %>%
+  str_to_lower %>%
+  str_flatten(collapse = "|")
+
+
+
+```
+
+## Background
+It is 2010, and you are working for the Idaho restaurant commission, and they need your help getting a clearer picture of how restaurant construction changed across Idaho from 2008 to 2009. They provided you a dataset of all commercial construction in Idaho for those two years. The data has a variable Type with a general category called Food_Beverage_Service that has other buildings besides restaurants in the category. You will need to use the restaurant names (see restaurants data object) and some additional key words to create the correct subgroupings. Your client expects to provide new data for 2010 and 2011 so your script needs to do the work. Make sure you do not use Excel to manipulate anything.
+
+
+## Data Wrangling
+
+```{r tidy_data, include=FALSE}
+# Join the two data sets together
+buildings0809 %>%
+  left_join(climate_zone_fips, by = c("FIPS.state","FIPS.county")) 
+
+
+# Data to answer question 1
+dat <- buildings0809 %>%
+  left_join(climate_zone_fips, by = c("FIPS.state","FIPS.county")) %>%
+  filter(Type == "Food_Beverage_Service") %>%
+  mutate(ProjectTitle = str_to_lower(str_trim(ProjectTitle))) %>%
+  mutate(Subgroups = case_when(str_detect(ProjectTitle, not_restaurants) ~ "Not_restaurants",
+                               str_detect(ProjectTitle, standalone_retail) ~ "Standalone_retail",
+                               str_detect(ProjectTitle, full_service_type) ~ "Full_service_type",
+                               str_detect(ProjectTitle, quick_service_type) ~ "Quick_service_type",
+                               str_detect(ProjectTitle, quick_service_names) ~ "Quick_service_names",
+                               str_detect(ProjectTitle, full_service_names) ~ "Full_service_names",
+                               SqFt >= 4000 ~ "Full_service_type",
+                               SqFt < 4000 ~ "Quick_service_type"))
+
+
+# Data to answer question 2
+idaho <- buildings0809 %>%
+  mutate(building_type = case_when(Type != "Food_Beverage_Service" ~ "All_Other_Commercial", 
+                                   Type == "Food_Beverage_Service" ~ "Restaurant"))
+
+# Data to answer question 3
+fast_food <- dat %>%
+  group_by(County.y, Year) %>%
+  summarise(Total_spent = sum(Value1000))
+
+# Data to answer question 4
+ada <- filter(idaho, County == "ADA, ID")
+
+```
+
+## Full vs Quick Service 
+1.How did full-service restaurant construction compare to quick service restaurant construction across county and years?
+
+It appears that while both restaurant service types resulted in less construction from 2008-2009; several quick service restaurants were still constructed in the counties of Canyon, Kootenai, and Nez Perce during 2009 while those counties saw no full service restaurants built. 
+
+```{r plot1}
+restaurants_only <- filter(dat, Subgroups %in% c("Full_service_type","Quick_service_type")) 
+
+ggplot(restaurants_only, aes(x = County.y)) +
+  geom_bar(aes(fill = Subgroups)) +
+  facet_grid(Subgroups ~ Year) +
+  scale_fill_discrete(name = "Service type", labels = c("Full Service", "Quick Service")) +
+  labs(x = "County", y = "Number of new Restaurants", title = "New Restaurant Construction: 2008-2009")
+  
+
+
+```
+
+## Restaurant vs Commercial Construction
+2.How did restaurant construction fare compare to the other commercial construction in Idaho?
+
+Both construction of restaurants as well as other commercial buildings saw significant declines in the transition from 2008 to 2009. Since there were 48 different categories of commercial construction, I decided to create a new data set which divided the construction between Restaurants and all other types of commercial construction. 
+```{r plot2}
+
+ggplot(idaho, aes(x = building_type )) +
+  geom_bar() +
+  facet_grid(~ Year) +
+  labs(x = "Construction Type", title = "Restaurant vs all other Commercial Construction", subtitle = "Idaho: 2008-2009")
+  
+```
+
+## County Spending
+
+3.Which county in Idaho spent the most on fast food construction each year?
+
+It is very clear that Ada county was the largest spender on fast food construction during the years of 2008 and 2009. All other counties were only spending fractions of what Ada county spent. The money spent is represented in $1,000s of dollars. 
+
+```{r plot3}
+ggplot(fast_food, aes(x = County.y, y = Total_spent)) +
+  geom_point() +
+  facet_grid(Year ~ .) +
+  labs(x = "County", y = "Dollars spent", title = "Total Spending on fast food Construction: Idaho") +
+  scale_y_continuous(labels = scales::dollar)
+
+
+```
+
+
+
+## Ada County
+4.In that county how did other commercial construction compare?
+
+The trend was very similar to the overall trend seen throughout all counties. There was a significant decline in restaurant construction along with all other commercial buildings. The reason for the major declines in construction from 2008 to 2009 is a result of the Great Recession which hit and slowed the economy greatly. This case study also shows that no counties were exempt from the impacts of the recession.  
+```{r plot4}
+ggplot(ada, aes(x = building_type)) +
+  geom_bar(aes(fill = building_type)) +
+  facet_grid(~ Year) +
+  scale_fill_discrete(name = element_blank(), labels = c("All other Commercial", "Restaurant")) +
+  theme(axis.text.x = element_blank(),
+        axis.ticks = element_blank()) +
+  labs(x = "Construction Type", title = "Restaurant vs all other Commercial Construction", subtitle = "Ada County: 2008-2009")
+
+
+```
+
+
+
+
